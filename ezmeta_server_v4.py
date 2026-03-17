@@ -111,9 +111,11 @@ def load_clients():
             rows = supabase_get("clients")
             if rows is not None and isinstance(rows, list):
                 return {"clients": rows}
+            return {"clients": []}
         except Exception as e:
             print(f"Supabase clients error: {e}")
-    # Fallback to file
+            return {"clients": []}
+    # Fallback to file only when NO Supabase
     if os.path.exists(CLIENTS_FILE):
         with open(CLIENTS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
