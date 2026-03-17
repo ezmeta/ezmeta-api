@@ -1,0 +1,13 @@
+{
+  "mode": "DEMO",
+  "access_token": "",
+  "ad_account_id": "",
+  "bot_token": "",
+  "chat_id": "",
+  "pause_ctr": 1.0,
+  "scale_roas": 4.0,
+  "freq_alert": 3.5,
+  "budget_warn": 80,
+  "scale_pct": 20,
+  "max_budget": 200
+}

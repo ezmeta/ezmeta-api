@@ -1,0 +1,64 @@
+{
+  "clients": [
+    {
+      "id": "client_001",
+      "name": "Trainer Huzaifah",
+      "business": "ATC Tactical System",
+      "plan": "PRO",
+      "status": "ACTIVE",
+      "access_token": "EAAL2ZBPOemMgBQ9ZAJZA8NE7w6QD6P5a5sNcta2R6QqSefXyQ06czAQtDv4FTtWIEaI0ZA5206wp4y9loAzAHCbYhXsZA8ytKQ1Vf1VSmwSSxqlGJVAGO1e5kCUXqt2NQvpiqQ7UGH0ulBnmeg2BuQtnWYsRTlRFGTrupFprZCyh7dthQge2z9GVKZC1yhZAavQ6mBOEbeGWgVfOhCQCno6fFKcKwKrMYuMonZBDnlMXvVCVswikOyzBEYilwoVQoxpZC4bkHIsAPWVP0ZD",
+      "ad_account_id": "act_986107347419174",
+      "chat_id": "1938251758",
+      "telegram_name": "@EZMetaAlertbot",
+      "onboard_date": "2026-03-17",
+      "monthly_fee_rm": 99,
+      "notes": "Owner / test account",
+      "scan_times": [
+        "08:00",
+        "14:00",
+        "21:00"
+      ]
+    },
+    {
+      "id": "client_002",
+      "name": "Asri Zulzali",
+      "email": "asrizulzali@gmail.com",
+      "business": "SAGA Capital",
+      "plan": "PRO",
+      "status": "ACTIVE",
+      "access_token": "LETAK_TOKEN_SINI",
+      "ad_account_id": "",
+      "chat_id": "",
+      "telegram_name": "",
+      "onboard_date": "2026-03-17",
+      "monthly_fee_rm": 99.0,
+      "notes": "",
+      "scan_times": [
+        "08:00",
+        "14:00",
+        "21:00"
+      ]
+    },
+    {
+      "id": "client_003",
+      "name": "Asri Zulzali",
+      "email": "asrizulzali@gmail.com",
+      "phone": "601139921990",
+      "business": "SAGA Capital",
+      "plan": "AGENCY",
+      "status": "ACTIVE",
+      "access_token": "LETAK_TOKEN_SINI",
+      "ad_account_id": "",
+      "chat_id": "",
+      "telegram_name": "",
+      "onboard_date": "2026-03-17",
+      "monthly_fee_rm": 199.0,
+      "notes": "",
+      "scan_times": [
+        "08:00",
+        "14:00",
+        "21:00"
+      ]
+    }
+  ]
+}
