@@ -87,6 +87,183 @@ def supabase_delete(table, filters):
 
 USE_SUPABASE = bool(SUPABASE_URL and SUPABASE_KEY)
 
+# Meta App credentials for token refresh
+META_APP_ID = os.environ.get("META_APP_ID", "")
+META_APP_SECRET = os.environ.get("META_APP_SECRET", "")
+
+# ============================================================
+# TOKEN MANAGEMENT
+# ============================================================
+
+def exchange_long_lived_token(short_token: str) -> dict:
+    """Exchange short-lived token for long-lived token (60 days)"""
+    if not META_APP_ID or not META_APP_SECRET:
+        return {"error": "App credentials not configured"}
+    try:
+        r = requests.get(
+            "https://graph.facebook.com/oauth/access_token",
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": META_APP_ID,
+                "client_secret": META_APP_SECRET,
+                "fb_exchange_token": short_token
+            }
+        )
+        data = r.json()
+        if "access_token" in data:
+            return {
+                "access_token": data["access_token"],
+                "token_type": data.get("token_type", "bearer"),
+                "expires_in": data.get("expires_in", 5183944),  # ~60 days
+                "expires_at": (datetime.now() + timedelta(seconds=data.get("expires_in", 5183944))).isoformat()
+            }
+        return {"error": data.get("error", {}).get("message", "Unknown error")}
+    except Exception as e:
+        return {"error": str(e)}
+
+def check_token_expiry(token: str) -> dict:
+    """Check token validity and expiry"""
+    if not META_APP_ID or not META_APP_SECRET:
+        return {"valid": False, "error": "App credentials not configured"}
+    try:
+        r = requests.get(
+            "https://graph.facebook.com/debug_token",
+            params={
+                "input_token": token,
+                "access_token": f"{META_APP_ID}|{META_APP_SECRET}"
+            }
+        )
+        data = r.json().get("data", {})
+        expires_at = data.get("expires_at", 0)
+        is_valid = data.get("is_valid", False)
+        days_left = 0
+        if expires_at:
+            expires_dt = datetime.fromtimestamp(expires_at)
+            days_left = (expires_dt - datetime.now()).days
+
+        return {
+            "valid": is_valid,
+            "expires_at": datetime.fromtimestamp(expires_at).isoformat() if expires_at else None,
+            "days_left": days_left,
+            "scopes": data.get("scopes", []),
+            "app_id": data.get("app_id", ""),
+            "needs_refresh": days_left < 10
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+def refresh_client_token(client_id: str) -> dict:
+    """Exchange and save new long-lived token for a client"""
+    client = get_client(client_id)
+    if not client:
+        return {"error": "Client not found"}
+
+    token = client.get("access_token", "")
+    if not token or token == "LETAK_TOKEN_SINI":
+        return {"error": "No token configured"}
+
+    # Check current token
+    status = check_token_expiry(token)
+    if not status.get("valid"):
+        return {"error": "Current token is invalid", "status": status}
+
+    # Exchange for long-lived token
+    result = exchange_long_lived_token(token)
+    if "error" in result:
+        return result
+
+    new_token = result["access_token"]
+    expires_at = result["expires_at"]
+
+    # Save to Supabase
+    updates = {
+        "access_token": new_token,
+        "token_expires_at": expires_at,
+        "token_refreshed_at": datetime.now().isoformat()
+    }
+
+    if USE_SUPABASE:
+        supabase_patch("clients", {"id": client_id}, updates)
+    else:
+        data = load_clients()
+        for i, c in enumerate(data["clients"]):
+            if c["id"] == client_id:
+                data["clients"][i].update(updates)
+                save_clients(data)
+                break
+
+    return {
+        "status": "ok",
+        "client_id": client_id,
+        "expires_at": expires_at,
+        "days_valid": result["expires_in"] // 86400
+    }
+
+def auto_refresh_all_tokens():
+    """Check and refresh tokens for all clients that expire within 10 days"""
+    clients = load_clients()["clients"]
+    results = []
+
+    for client in clients:
+        if client.get("status") != "ACTIVE":
+            continue
+        token = client.get("access_token", "")
+        if not token or token == "LETAK_TOKEN_SINI":
+            continue
+
+        # Check expiry
+        status = check_token_expiry(token)
+        days_left = status.get("days_left", 999)
+
+        if not status.get("valid"):
+            results.append({
+                "client_id": client["id"],
+                "client_name": client["name"],
+                "action": "EXPIRED",
+                "message": "Token sudah expired!"
+            })
+            # Notify admin via Telegram
+            cfg = load_config()
+            bot_token = cfg.get("bot_token", "")
+            chat_id = cfg.get("chat_id", "")
+            if bot_token and chat_id:
+                msg = f"🔴 <b>Token Expired!</b>\n\nClient: {client['name']}\nToken sudah expired. Sila generate token baru dalam dashboard."
+                send_telegram(bot_token, chat_id, msg)
+
+        elif days_left < 10:
+            # Auto refresh
+            result = refresh_client_token(client["id"])
+            if result.get("status") == "ok":
+                results.append({
+                    "client_id": client["id"],
+                    "client_name": client["name"],
+                    "action": "REFRESHED",
+                    "days_valid": result["days_valid"]
+                })
+                # Notify admin
+                cfg = load_config()
+                bot_token = cfg.get("bot_token", "")
+                chat_id = cfg.get("chat_id", "")
+                if bot_token and chat_id:
+                    msg = f"✅ <b>Token Auto-Refreshed!</b>\n\nClient: {client['name']}\nToken baru valid untuk {result['days_valid']} hari."
+                    send_telegram(bot_token, chat_id, msg)
+            else:
+                results.append({
+                    "client_id": client["id"],
+                    "client_name": client["name"],
+                    "action": "REFRESH_FAILED",
+                    "error": result.get("error")
+                })
+        else:
+            results.append({
+                "client_id": client["id"],
+                "client_name": client["name"],
+                "action": "OK",
+                "days_left": days_left
+            })
+
+    return results
+
 app = FastAPI(title="EZMeta API v2.0", version="2.0.0")
 
 app.add_middleware(
@@ -773,6 +950,54 @@ def get_pending_clients():
     data = load_clients()
     pending = [c for c in data["clients"] if c.get("status") == "PENDING"]
     return {"pending": pending, "count": len(pending)}
+
+# ============================================================
+# ROUTES — TOKEN MANAGEMENT
+# ============================================================
+
+@app.post("/token/exchange/{client_id}")
+def exchange_token(client_id: str, token: str):
+    """Exchange short-lived token for long-lived token"""
+    result = refresh_client_token(client_id)
+    return result
+
+@app.get("/token/check/{client_id}")
+def check_token(client_id: str):
+    """Check token validity and expiry for a client"""
+    client = get_client(client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    token = client.get("access_token", "")
+    if not token or token == "LETAK_TOKEN_SINI":
+        return {"valid": False, "message": "Token belum diset", "days_left": 0}
+    status = check_token_expiry(token)
+    return status
+
+@app.get("/token/check-all")
+def check_all_tokens():
+    """Check token status for all clients"""
+    clients = load_clients()["clients"]
+    results = []
+    for client in clients:
+        if client.get("status") != "ACTIVE":
+            continue
+        token = client.get("access_token", "")
+        if not token or token == "LETAK_TOKEN_SINI":
+            results.append({"client_id": client["id"], "client_name": client["name"], "valid": False, "message": "Token belum diset", "days_left": 0})
+            continue
+        status = check_token_expiry(token)
+        results.append({
+            "client_id": client["id"],
+            "client_name": client["name"],
+            **status
+        })
+    return {"results": results, "total": len(results)}
+
+@app.post("/token/refresh-all")
+def refresh_all_tokens():
+    """Auto refresh all tokens expiring within 10 days"""
+    results = auto_refresh_all_tokens()
+    return {"status": "ok", "results": results}
 
 # ============================================================
 # ROUTES — SCAN & ALERTS
