@@ -1,1 +1,1 @@
-web: uvicorn ezmeta_server_v4:app --host 0.0.0.0 --port $PORT
+web: uvicorn ezmeta_server_v5:app --host 0.0.0.0 --port $PORT
