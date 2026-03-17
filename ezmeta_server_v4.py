@@ -107,9 +107,12 @@ DATA_FILE    = "ezmeta_data.json"
 
 def load_clients():
     if USE_SUPABASE:
-        rows = supabase_get("clients")
-        if rows is not None:
-            return {"clients": rows}
+        try:
+            rows = supabase_get("clients")
+            if rows is not None and isinstance(rows, list):
+                return {"clients": rows}
+        except Exception as e:
+            print(f"Supabase clients error: {e}")
     # Fallback to file
     if os.path.exists(CLIENTS_FILE):
         with open(CLIENTS_FILE, "r", encoding="utf-8") as f:
@@ -123,9 +126,12 @@ def save_clients(data):
 
 def get_client(client_id: str):
     if USE_SUPABASE:
-        rows = supabase_get("clients", {"id": client_id})
-        if rows:
-            return rows[0]
+        try:
+            rows = supabase_get("clients", {"id": client_id})
+            if rows and isinstance(rows, list) and len(rows) > 0:
+                return rows[0]
+        except Exception as e:
+            print(f"Supabase get_client error: {e}")
         return None
     data = load_clients()
     for c in data["clients"]:
@@ -137,23 +143,36 @@ def get_client(client_id: str):
 # CONFIG
 # ============================================================
 
+DEFAULT_CONFIG = {
+    "mode": "DEMO",
+    "access_token": "",
+    "ad_account_id": "",
+    "bot_token": "",
+    "chat_id": "",
+    "pause_ctr": 1.0,
+    "scale_roas": 4.0,
+    "freq_alert": 3.5,
+    "budget_warn": 80,
+    "scale_pct": 20,
+    "max_budget": 200,
+}
+
 def load_config():
     if USE_SUPABASE:
-        rows = supabase_get("config", {"id": 1})
-        if rows:
-            return rows[0]
+        try:
+            rows = supabase_get("config", {"id": 1})
+            if rows and isinstance(rows, list) and len(rows) > 0:
+                return rows[0]
+            else:
+                # Auto-create default config in Supabase
+                supabase_post("config", {"id": 1, **DEFAULT_CONFIG})
+                return DEFAULT_CONFIG.copy()
+        except Exception as e:
+            print(f"Supabase config error: {e}")
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             return json.load(f)
-    return {
-        "mode": "DEMO",
-        "pause_ctr": 1.0,
-        "scale_roas": 4.0,
-        "freq_alert": 3.5,
-        "budget_warn": 80,
-        "scale_pct": 20,
-        "max_budget": 200,
-    }
+    return DEFAULT_CONFIG.copy()
 
 def save_config(cfg):
     if USE_SUPABASE:
