@@ -939,13 +939,40 @@ class LoginRequest(BaseModel):
 def login(req: LoginRequest):
     data = load_clients()
     username = req.username.lower().strip()
-    
-    # Check admin accounts
+
+    # Check admin accounts from Supabase first
+    if USE_SUPABASE:
+        try:
+            admins = supabase_get("admins", {"username": username})
+            if admins and isinstance(admins, list) and len(admins) > 0:
+                admin = admins[0]
+                if admin.get("password") == req.password:
+                    # Update last_login
+                    supabase_patch("admins", {"username": username}, {"last_login": datetime.now().isoformat()})
+                    return {
+                        "status": "ok",
+                        "user": {
+                            "username": username,
+                            "name": admin["name"],
+                            "role": admin.get("role", "admin"),
+                            "isAdmin": True,
+                            "client_id": None,
+                            "avatar": admin.get("avatar", username[:2].upper())
+                        }
+                    }
+                else:
+                    raise HTTPException(status_code=401, detail="Password salah")
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Supabase admin login error: {e}")
+
+    # Fallback hardcoded admins
     ADMINS = {
         "admin": {"password": "ezmeta2026", "name": "Admin EZMeta", "role": "admin", "isAdmin": True},
         "pokcik": {"password": "ezmeta123", "name": "Muhammad Al Hafiz", "role": "admin", "isAdmin": True},
     }
-    
+
     if username in ADMINS and ADMINS[username]["password"] == req.password:
         admin = ADMINS[username]
         return {
@@ -991,6 +1018,17 @@ def login(req: LoginRequest):
             raise HTTPException(status_code=403, detail="Permohonan anda telah ditolak. Hubungi admin.")
     
     raise HTTPException(status_code=401, detail="Username atau password salah")
+
+@app.post("/auth/update-profile")
+def update_admin_profile(username: str, name: str, avatar: Optional[str] = None):
+    """Update admin name and avatar in Supabase"""
+    if USE_SUPABASE:
+        updates = {"name": name}
+        if avatar:
+            updates["avatar"] = avatar
+        supabase_patch("admins", {"username": username}, updates)
+        return {"status": "ok", "message": "Profile dikemaskini!"}
+    return {"status": "ok", "message": "Supabase tidak aktif"}
 
 @app.post("/auth/change-password")
 def change_password(client_id: str, old_password: str, new_password: str):
