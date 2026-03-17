@@ -334,6 +334,9 @@ DEFAULT_CONFIG = {
     "budget_warn": 80,
     "scale_pct": 20,
     "max_budget": 200,
+    "auto_execute": "off",
+    "auto_pause": True,
+    "auto_scale": True,
 }
 
 def load_config():
@@ -1132,15 +1135,37 @@ def scan_all_clients():
                 msg += f"  ⚠️ {f['campaign_name']} [{f['severity']}]\n"
             msg += "\n"
 
+        # AUTO-EXECUTE LOGIC
+        auto_execute = cfg.get("auto_execute", "off")
+        auto_pause   = cfg.get("auto_pause", True)
+        auto_scale   = cfg.get("auto_scale", True)
+        executed     = []
+
+        if mode == "LIVE" and auto_execute == "full" and token:
+            for r in engine["recommendations"]:
+                if r["type"] == "PAUSE" and auto_pause:
+                    res = pause_campaign(token, r["campaign_id"])
+                    label = "✅ AUTO-PAUSED" if "error" not in str(res) else "❌ Pause failed"
+                    executed.append(f"{label}: {r['campaign_name']}")
+                elif r["type"] == "SCALE" and auto_scale and r.get("new_budget"):
+                    res = scale_budget(token, r["campaign_id"], int(r["new_budget"]))
+                    label = "✅ AUTO-SCALED" if "error" not in str(res) else "❌ Scale failed"
+                    executed.append(f"{label}: {r['campaign_name']}")
+
         if engine["recommendations"]:
             msg += f"🤖 <b>AI Recommendations ({len(engine['recommendations'])})</b>\n"
             for r in engine["recommendations"][:3]:
                 emoji = "⏸" if r["type"]=="PAUSE" else "🚀" if r["type"]=="SCALE" else "⚠️"
                 msg += f"  {emoji} {r['campaign_name']}: {r['reason']}\n"
 
-        msg += f"\n<i>Mode: {mode}</i>"
+        if executed:
+            msg += f"\n⚡ <b>Auto-Executed ({len(executed)})</b>\n"
+            for e in executed:
+                msg += f"  {e}\n"
 
-        # Send to Telegram
+        mode_label = {"off": "Manual", "semi": "Semi-Auto", "full": "⚡ Full-Auto [AGGRESSIVE]"}.get(auto_execute, "Manual")
+        msg += f"\n<i>Mode: {mode} | Execute: {mode_label}</i>"
+
         tg_result = None
         if bot_token and chat_id:
             tg_result = send_telegram(bot_token, chat_id, msg)
@@ -1149,8 +1174,10 @@ def scan_all_clients():
             "client_id": client["id"],
             "client_name": client["name"],
             "mode": mode,
+            "auto_execute": auto_execute,
             "campaigns_scanned": len(campaigns),
             "recommendations": len(engine["recommendations"]),
+            "executed": len(executed),
             "telegram_sent": tg_result is not None and "error" not in str(tg_result),
         })
 
@@ -1249,6 +1276,9 @@ class ConfigUpdate(BaseModel):
     budget_warn: Optional[float] = None
     scale_pct: Optional[float] = None
     max_budget: Optional[float] = None
+    auto_execute: Optional[str] = None   # off | semi | full
+    auto_pause: Optional[bool] = None
+    auto_scale: Optional[bool] = None
 
 @app.post("/config")
 def update_config(update: ConfigUpdate):
@@ -1379,13 +1409,72 @@ def change_password(client_id: str, old_password: str, new_password: str):
 @app.post("/telegram/test")
 def test_telegram():
     cfg = load_config()
-    bot_token = cfg.get("bot_token","")
+    bot_token = os.environ.get("BOT_TOKEN", "") or cfg.get("bot_token","")
     chat_id = cfg.get("chat_id","")
     if not bot_token or not chat_id:
         raise HTTPException(status_code=400, detail="Bot token atau chat ID belum set")
     msg = f"✅ EZMeta test alert!\n🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}\n🚀 Server running"
     result = send_telegram(bot_token, chat_id, msg)
     return {"status":"ok","telegram":result}
+
+@app.post("/telegram/test-client")
+def test_telegram_client(client_id: str):
+    """Test Telegram untuk client tertentu — hantar Chat ID helper message"""
+    client = get_client(client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    bot_token = os.environ.get("BOT_TOKEN", "")
+    if not bot_token:
+        raise HTTPException(status_code=400, detail="BOT_TOKEN belum set di server")
+    chat_id = client.get("chat_id","")
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="Chat ID client belum set")
+    msg = (
+        f"✅ <b>EZMeta — Telegram Berjaya Disambung!</b>\n\n"
+        f"👤 Client: {client['name']}\n"
+        f"🏢 Business: {client.get('business','')}\n"
+        f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+        f"🤖 Bot <b>@EZMetaAlertbot</b> akan hantar laporan iklan anda secara automatik 3x sehari:\n"
+        f"  ☀️ 8:00 pagi\n"
+        f"  🌤 2:00 petang\n"
+        f"  🌙 9:00 malam\n\n"
+        f"<i>Selamat menggunakan EZMeta! 🚀</i>"
+    )
+    result = send_telegram(bot_token, chat_id, msg)
+    return {"status":"ok","client_id":client_id,"telegram":result}
+
+@app.get("/telegram/get-chat-id")
+def get_chat_id_helper():
+    """
+    Endpoint helper — explain cara client boleh dapat Chat ID diorang.
+    Bot akan auto-reply bila client hantar /start atau sebarang mesej.
+    """
+    bot_token = os.environ.get("BOT_TOKEN", "")
+    if not bot_token:
+        raise HTTPException(status_code=400, detail="BOT_TOKEN belum set")
+
+    # Get bot updates — check recent messages for chat IDs
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{bot_token}/getUpdates")
+        updates = r.json().get("result", [])
+        recent = []
+        for u in updates[-10:]:
+            msg = u.get("message", {})
+            chat = msg.get("chat", {})
+            if chat.get("id"):
+                recent.append({
+                    "chat_id": str(chat["id"]),
+                    "name": chat.get("first_name","") + " " + chat.get("last_name",""),
+                    "username": chat.get("username",""),
+                    "date": datetime.fromtimestamp(msg.get("date",0)).strftime("%d/%m/%Y %H:%M") if msg.get("date") else ""
+                })
+        return {
+            "instructions": "Client kena hantar mesej /start ke @EZMetaAlertbot dulu",
+            "bot_username": "@EZMetaAlertbot",
+            "recent_messages": recent
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
